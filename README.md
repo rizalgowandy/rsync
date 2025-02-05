@@ -7,9 +7,9 @@ Package rsync contains a native Go rsync implementation.
 
 This repository currently contains:
 
-1. `gokr-rsyncd`, a read-only rsync daemon sender-only Go implementation of
-   rsyncd. It implements the rsync daemon network protocol (port 873/tcp by
-   default), but can be used over SSH or locally as well.
+1. `gokr-rsyncd`, a rsync daemon Go implementation of rsyncd. It implements the
+   rsync daemon network protocol (port 873/tcp by default), but can be used over
+   SSH or locally as well.
 2. `gokr-rsync` is an rsync receiver implementation that can download files via
    rsync (daemon protocol or SSH).
 
@@ -20,8 +20,6 @@ The following known improvements are not yet implemented:
 * Making `gokr-rsync` chroot (and/or Linux mount namespaces when available?)
   into the destination directory to reduce chances of accidental file system
   manipulation in case of bugs.
-* Making `gokr-rsyncd` also implement an rsync receiver, so that it can accept
-  files.
 * Merging `gokr-rsyncd` and `gokr-rsync` into a single binary.
 
 This project accepts contributions as time permits to merge them (best effort).
@@ -44,20 +42,20 @@ any issues you run into!
 
 ## Existing rsync implementation survey
 
-| Language | URL                                                                             | Note                                                                                                                                  | Max Protocol                                                                                                        | Server mode? |
-|----------|---------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|--------------|
-| C        | [WayneD/rsync](https://github.com/WayneD/rsync)                                 | original “tridge” implementation; I found [older versions](https://github.com/WayneD/rsync/tree/v2.6.1pre2) easier to study           | [31](https://github.com/WayneD/rsync/blob/592c6bc3e5e93f36c2fdc0a491a9fb43a41cf688/rsync.h#L113)                    | ✔ yes        |
-| C        | [kristapsdz/openrsync](https://github.com/kristapsdz/openrsync)                 | OpenBSD, good docs                                                                                                                    | [27](https://github.com/kristapsdz/openrsync/blob/e54d57f7572381da2b549d39c7968fc79dac8e1d/extern.h#L30)            | ✔ yes        |
-| **Go**   | [gokrazy/rsync](https://github.com/gokrazy/rsync)                               | → you are here ←                                                                                                                      | [27](https://github.com/gokrazy/rsync/blob/b3b58770b864613551036a2ef2827b74ace77749/internal/rsyncd/rsyncd.go#L317) | ✔ yes 🎉     |
-| **Go**   | [jbreiding/rsync-go](https://github.com/jbreiding/rsync-go)                     | rsync algorithm                                                                                                                       |                                                                                                                     | ❌ no        |
-| **Go**   | [kaiakz/rsync-os](https://github.com/kaiakz/rsync-os)                           | only client/receiver                                                                                                                  | [27](https://github.com/kaiakz/rsync-os/blob/64e84daeabb1fa4d2c7cf766c196306adfba6cb2/rsync/const.go#L4)            | ❌ no        |
-| **Go**   | [knight42](https://gist.github.com/knight42/6ad35ce6fbf96519259b43a8c3f37478)   | proxy                                                                                                                                 |                                                                                                                     | ❌ no        |
-| **Go**   | [c4milo/gsync](https://github.com/c4milo/gsync)                                 |                                                                                                                                       |                                                                                                                     | ❌ no        |
-| Java     | [APNIC-net/repositoryd](https://github.com/APNIC-net/repositoryd)               | archived                                                                                                                              |                                                                                                                     | ✔ yes        |
-| Java     | [JohannesBuchner/Jarsync](https://github.com/JohannesBuchner/Jarsync/)          | archived, [internet draft RFC “The rsync Network Protocol”](https://github.com/JohannesBuchner/Jarsync/blob/master/jarsync/rsync.txt) |                                                                                                                     | ✔ yes        |
-| Java     | [perlundq/yajsync](https://github.com/perlundq/yajsync#example)                 |                                                                                                                                       |                                                                                                                     | ✔ yes        |
-| C++      | [gilbertchen/acrosync-library](https://github.com/gilbertchen/acrosync-library) | commercial                                                                                                                            |                                                                                                                     | ❌ no        |
-| Rust     | [sourcefrog/rsyn](https://github.com/sourcefrog/rsyn#why-do-this)               | client, “rsyn is rsync with no c”                                                                                                     | [27](https://github.com/sourcefrog/rsyn/blob/2ebbfcfe999fdf2d1a434d8614d07aa93873461b/src/connection.rs#L38)        | ❌ no        |
+| Language | URL                                                                                 | Note                                                                                                                                  | Max Protocol                                                                                                        | Server mode? |
+|----------|-------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|--------------|
+| C        | [RsyncProject/rsync](https://github.com/RsyncProject/rsync) (formerly WayneD/rsync) | original “tridge” implementation; I found [older versions](https://github.com/WayneD/rsync/tree/v2.6.1pre2) easier to study           | [31](https://github.com/WayneD/rsync/blob/592c6bc3e5e93f36c2fdc0a491a9fb43a41cf688/rsync.h#L113)                    | ✔ yes        |
+| C        | [kristapsdz/openrsync](https://github.com/kristapsdz/openrsync)                     | OpenBSD, good docs                                                                                                                    | [27](https://github.com/kristapsdz/openrsync/blob/e54d57f7572381da2b549d39c7968fc79dac8e1d/extern.h#L30)            | ✔ yes        |
+| **Go**   | [gokrazy/rsync](https://github.com/gokrazy/rsync)                                   | → you are here ←                                                                                                                      | [27](https://github.com/gokrazy/rsync/blob/b3b58770b864613551036a2ef2827b74ace77749/internal/rsyncd/rsyncd.go#L317) | ✔ yes 🎉     |
+| **Go**   | [jbreiding/rsync-go](https://github.com/jbreiding/rsync-go)                         | rsync algorithm                                                                                                                       |                                                                                                                     | ❌ no        |
+| **Go**   | [kaiakz/rsync-os](https://github.com/kaiakz/rsync-os)                               | only client/receiver                                                                                                                  | [27](https://github.com/kaiakz/rsync-os/blob/64e84daeabb1fa4d2c7cf766c196306adfba6cb2/rsync/const.go#L4)            | ❌ no        |
+| **Go**   | [knight42](https://gist.github.com/knight42/6ad35ce6fbf96519259b43a8c3f37478)       | proxy                                                                                                                                 |                                                                                                                     | ❌ no        |
+| **Go**   | [c4milo/gsync](https://github.com/c4milo/gsync)                                     |                                                                                                                                       |                                                                                                                     | ❌ no        |
+| Java     | [APNIC-net/repositoryd](https://github.com/APNIC-net/repositoryd)                   | archived                                                                                                                              |                                                                                                                     | ✔ yes        |
+| Java     | [JohannesBuchner/Jarsync](https://github.com/JohannesBuchner/Jarsync/)              | archived, [internet draft RFC “The rsync Network Protocol”](https://github.com/JohannesBuchner/Jarsync/blob/master/jarsync/rsync.txt) |                                                                                                                     | ✔ yes        |
+| Java     | [perlundq/yajsync](https://github.com/perlundq/yajsync#example)                     |                                                                                                                                       |                                                                                                                     | ✔ yes        |
+| C++      | [gilbertchen/acrosync-library](https://github.com/gilbertchen/acrosync-library)     | commercial                                                                                                                            |                                                                                                                     | ❌ no        |
+| Rust     | [sourcefrog/rsyn](https://github.com/sourcefrog/rsyn#why-do-this)                   | client, “rsyn is rsync with no c”                                                                                                     | [27](https://github.com/sourcefrog/rsyn/blob/2ebbfcfe999fdf2d1a434d8614d07aa93873461b/src/connection.rs#L38)        | ❌ no        |
 
 ## Getting started
 
@@ -171,6 +169,10 @@ This setup is more reliable than setup 3 because the rsync protocol version will
 be negotiated between client and server. This setup is slightly inconvenient
 because it requires a config file to be present on the server in
 `~/.config/gokr-rsyncd.toml`.
+
+Note that this mode of operation is only implemented by the original “trigde”
+rsync, not in openrsync. Apple started shipping openrsync with macOS 15 Sequoia,
+so you might need to explicitly start /usr/libexec/rsync/rsync.samba on Macs.
 
 Example:
 * Server will be started via SSH

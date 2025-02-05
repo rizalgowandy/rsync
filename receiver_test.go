@@ -1,7 +1,6 @@
 package rsync_test
 
 import (
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/user"
@@ -56,7 +55,7 @@ func TestReceiver(t *testing.T) {
 		t.Fatal(err)
 	}
 	hello := filepath.Join(source, "hello")
-	if err := ioutil.WriteFile(hello, []byte("world"), 0644); err != nil {
+	if err := os.WriteFile(hello, []byte("world"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	mtime, err := time.Parse(time.RFC3339, "2009-11-10T23:00:00Z")
@@ -75,7 +74,7 @@ func TestReceiver(t *testing.T) {
 	}
 
 	no := filepath.Join(source, "no")
-	if err := ioutil.WriteFile(no, []byte("no"), 0666); err != nil {
+	if err := os.WriteFile(no, []byte("no"), 0666); err != nil {
 		t.Fatal(err)
 	}
 	uid, gid, verifyUid := setUid(t, no)
@@ -101,7 +100,7 @@ func TestReceiver(t *testing.T) {
 
 	{
 		want := []byte("world")
-		got, err := ioutil.ReadFile(filepath.Join(dest, "hello"))
+		got, err := os.ReadFile(filepath.Join(dest, "hello"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -146,7 +145,7 @@ func TestReceiver(t *testing.T) {
 
 	// Make a change that is invisible with our current settings:
 	// change the file contents without changing size and mtime.
-	if err := ioutil.WriteFile(hello, []byte("moon!"), 0644); err != nil {
+	if err := os.WriteFile(hello, []byte("moon!"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(hello, mtime, mtime); err != nil {
@@ -166,7 +165,7 @@ func TestReceiver(t *testing.T) {
 
 	{
 		want := []byte("world")
-		got, err := ioutil.ReadFile(filepath.Join(dest, "hello"))
+		got, err := os.ReadFile(filepath.Join(dest, "hello"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -232,6 +231,51 @@ func TestReceiverSync(t *testing.T) {
 	}
 }
 
+func TestReceiverSyncDelete(t *testing.T) {
+	tmp := t.TempDir()
+	source := filepath.Join(tmp, "source")
+	dest := filepath.Join(tmp, "dest")
+	destLarge := filepath.Join(dest, "large-data-file")
+
+	headPattern := []byte{0x11}
+	bodyPattern := []byte{0xbb}
+	endPattern := []byte{0xee}
+	rsynctest.WriteLargeDataFile(t, source, headPattern, bodyPattern, endPattern)
+
+	// start a server to sync from
+	srv := rsynctest.New(t, rsynctest.InteropModule(source))
+
+	args := []string{
+		"gokr-rsync",
+		"-aH",
+		"--delete",
+		"rsync://localhost:" + srv.Port + "/interop/",
+		dest,
+	}
+	firstStats, err := receivermaincmd.Main(args, os.Stdin, os.Stdout, os.Stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("firstStats: %+v", firstStats)
+	//     receiver_test.go:211: firstStats: &{Read:91 Written:3146087 Size:3149824}
+
+	if err := rsynctest.DataFileMatches(destLarge, headPattern, bodyPattern, endPattern); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add more files to the destination, which should be deleted:
+	extra := filepath.Join(dest, "extrafile")
+	if err := os.WriteFile(extra, []byte("deleteme"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receivermaincmd.Main(args, os.Stdin, os.Stdout, os.Stdout); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(extra); !os.IsNotExist(err) {
+		t.Errorf("expected %s to be deleted, but it still exists", extra)
+	}
+}
+
 func TestReceiverSSH(t *testing.T) {
 	tmp := t.TempDir()
 	source := filepath.Join(tmp, "source")
@@ -240,7 +284,7 @@ func TestReceiverSSH(t *testing.T) {
 	if err := os.MkdirAll(source, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := ioutil.WriteFile(filepath.Join(source, "hello"), []byte("world"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(source, "hello"), []byte("world"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -278,7 +322,7 @@ func TestReceiverSSH(t *testing.T) {
 
 	{
 		want := []byte("world")
-		got, err := ioutil.ReadFile(filepath.Join(dest, "hello"))
+		got, err := os.ReadFile(filepath.Join(dest, "hello"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -296,7 +340,7 @@ func TestReceiverCommand(t *testing.T) {
 	if err := os.MkdirAll(source, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := ioutil.WriteFile(filepath.Join(source, "hello"), []byte("world"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(source, "hello"), []byte("world"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -331,7 +375,51 @@ func TestReceiverCommand(t *testing.T) {
 
 	{
 		want := []byte("world")
-		got, err := ioutil.ReadFile(filepath.Join(dest, "hello"))
+		got, err := os.ReadFile(filepath.Join(dest, "hello"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Fatalf("unexpected file contents: diff (-want +got):\n%s", diff)
+		}
+	}
+}
+
+// TestReceiverSymlinkTraversal passes by default but is useful to simulate
+// a symlink race TOCTOU attack by modifying rsyncd/rsyncd.go.
+func TestReceiverSymlinkTraversal(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "passwd"), []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(tmp, "source")
+	dest := filepath.Join(tmp, "dest")
+
+	if err := os.MkdirAll(source, 0755); err != nil {
+		t.Fatal(err)
+	}
+	hello := filepath.Join(source, "passwd")
+	if err := os.WriteFile(hello, []byte("benign"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// start a server to sync from
+	srv := rsynctest.New(t, rsynctest.InteropModule(source))
+
+	args := []string{
+		"gokr-rsync",
+		"-aH",
+		"rsync://localhost:" + srv.Port + "/interop/",
+		dest,
+	}
+	_, err := receivermaincmd.Main(args, os.Stdin, os.Stdout, os.Stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	{
+		want := []byte("benign")
+		got, err := os.ReadFile(filepath.Join(dest, "passwd"))
 		if err != nil {
 			t.Fatal(err)
 		}

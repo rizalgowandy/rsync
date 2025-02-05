@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/gokrazy/rsync"
+	"github.com/gokrazy/rsync/internal/nofollow"
 	"github.com/gokrazy/rsync/internal/rsyncchecksum"
 	"github.com/gokrazy/rsync/internal/rsynccommon"
 	"github.com/mmcloughlin/md4"
@@ -72,7 +73,7 @@ func (st *sendTransfer) sendFiles(fileList *fileList) error {
 			// value and gives an index into the sorted signature table which
 			// points to the first entry in the table which has a matching
 			// hash.”
-			for idx := range head.Sums {
+			for idx := len(head.Sums) - 1; idx >= 0; idx-- {
 				tagTable[targets[idx].tag] = idx
 			}
 		}
@@ -150,7 +151,7 @@ func (st *sendTransfer) sendFile(fileIndex int32, fl file) error {
 	// increases throughput with “tridge” rsync as client by 50 Mbit/s.
 	const chunkSize = 256 * 1024
 
-	f, err := os.Open(fl.path)
+	f, err := os.OpenFile(fl.path, os.O_RDONLY|nofollow.Maybe, 0)
 	if err != nil {
 		return err
 	}
