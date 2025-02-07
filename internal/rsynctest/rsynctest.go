@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -17,8 +16,8 @@ import (
 	"testing"
 
 	"github.com/gokrazy/rsync/internal/anonssh"
+	maincmd "github.com/gokrazy/rsync/internal/daemonmaincmd"
 	"github.com/gokrazy/rsync/internal/log"
-	"github.com/gokrazy/rsync/internal/maincmd"
 	"github.com/gokrazy/rsync/internal/rsyncdconfig"
 	"github.com/gokrazy/rsync/rsyncd"
 	"github.com/google/go-cmp/cmp"
@@ -44,6 +43,14 @@ func InteropModule(path string) []rsyncd.Module {
 			Path: path,
 		},
 	}
+}
+
+// WritableInteropModule is a wrapper around InteropModule that marks the module
+// as writable (not read-only).
+func WritableInteropModule(path string) []rsyncd.Module {
+	mods := InteropModule(path)
+	mods[0].Writable = true
+	return mods
 }
 
 type Option func(ts *TestServer)
@@ -276,14 +283,14 @@ func WriteLargeDataFile(t *testing.T, source string, headPattern, bodyPattern, e
 	if err := os.MkdirAll(filepath.Dir(large), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := ioutil.WriteFile(large, content, 0644); err != nil {
+	if err := os.WriteFile(large, content, 0644); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func DataFileMatches(fn string, headPattern, bodyPattern, endPattern []byte) error {
 	want := ConstructLargeDataFile(headPattern, bodyPattern, endPattern)
-	got, err := ioutil.ReadFile(fn)
+	got, err := os.ReadFile(fn)
 	if err != nil {
 		return err
 	}

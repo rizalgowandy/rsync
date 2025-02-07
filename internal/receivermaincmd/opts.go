@@ -23,11 +23,14 @@ type Opts struct {
 	PreserveDevices  bool
 	PreserveSpecials bool
 	PreserveTimes    bool
+	OmitDirTimes     bool
 	Recurse          bool
 	IgnoreTimes      bool
 	DryRun           bool
 	D                bool
 	ShellCommand     string
+	DeleteMode       bool
+	Verbose          bool
 }
 
 func NewGetOpt() (*Opts, *getoptions.GetOpt) {
@@ -50,6 +53,7 @@ func NewGetOpt() (*Opts, *getoptions.GetOpt) {
 	// rsync-compatible flags
 	opt.BoolVar(&opts.Archive, "archive", false, opt.Alias("a"))
 	opt.BoolVar(&opts.Update, "update", false, opt.Alias("u"))
+	opt.BoolVar(&opts.DeleteMode, "delete", false)
 	opt.BoolVar(&opts.PreserveHardlinks, "hard-links", false, opt.Alias("H"))
 
 	opt.BoolVar(&opts.PreserveGid, "group", false, opt.Alias("g"))
@@ -61,8 +65,10 @@ func NewGetOpt() (*Opts, *getoptions.GetOpt) {
 	opt.BoolVar(&opts.Recurse, "recursive", false, opt.Alias("r"))
 	// TODO: implement PreserveTimes
 	opt.BoolVar(&opts.PreserveTimes, "times", false, opt.Alias("t"))
-	opt.Bool("v", false)     // verbosity; ignored
-	opt.Bool("debug", false) // debug; ignored
+	// TODO: implement OmitDirTimes
+	opt.BoolVar(&opts.OmitDirTimes, "omit-dir-times", false, opt.Alias("O"))
+	opt.BoolVar(&opts.Verbose, "v", false) // verbosity
+	opt.Bool("debug", false)               // debug; ignored
 	// TODO: implement IgnoreTimes
 	opt.BoolVar(&opts.IgnoreTimes, "ignore-times", false, opt.Alias("I"))
 	opt.BoolVar(&opts.DryRun, "dry-run", false, opt.Alias("n"))

@@ -18,7 +18,7 @@ var (
 )
 
 // rsync/flist.c:send_file_list
-func (st *sendTransfer) sendFileList(mod Module, opts *Opts, paths []string) (*fileList, error) {
+func (st *sendTransfer) sendFileList(mod Module, opts *Opts, paths []string, excl *filterRuleList) (*fileList, error) {
 	var fileList fileList
 	fec := &rsyncwire.Buffer{}
 
@@ -58,6 +58,10 @@ func (st *sendTransfer) sendFileList(mod Module, opts *Opts, paths []string) (*f
 				flags |= rsync.XMIT_TOP_DIR
 			}
 			// st.logger.Printf("flags for %q: %v", name, flags)
+
+			if excl.matches(name) {
+				return filepath.SkipDir
+			}
 
 			fileList.files = append(fileList.files, file{
 				path:    path,

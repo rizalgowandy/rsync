@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gokrazy/rsync"
 	"github.com/gokrazy/rsync/internal/log"
+	"github.com/gokrazy/rsync/internal/receiver"
 	"github.com/gokrazy/rsync/internal/rsyncwire"
 )
 
@@ -27,9 +30,10 @@ type sendTransfer struct {
 }
 
 type Module struct {
-	Name string   `toml:"name"`
-	Path string   `toml:"path"`
-	ACL  []string `toml:"acl"`
+	Name     string   `toml:"name"`
+	Path     string   `toml:"path"`
+	ACL      []string `toml:"acl"`
+	Writable bool     `toml:"writable"`
 }
 
 // Option specifies the server options.
@@ -109,6 +113,16 @@ type file struct {
 	path    string
 	wpath   string
 	regular bool
+
+	// fields below are used by the receiver (TODO: unify)
+	Name       string
+	Length     int64
+	ModTime    time.Time
+	Mode       int32
+	Uid        int32
+	Gid        int32
+	LinkTarget string
+	Rdev       int32
 }
 
 type fileList struct {
@@ -303,8 +317,7 @@ func (s *Server) HandleDaemonConn(ctx context.Context, conn io.ReadWriter, remot
 		return fmt.Errorf("protocol error: got %q, expected %q", got, want)
 	}
 	paths := remaining[1:]
-
-	// TODO: verify --sender is set and error out otherwise
+	s.logger.Printf("paths: %q", paths)
 
 	return s.HandleConn(module, rd, crd, cwr, paths, opts, false)
 }
@@ -341,13 +354,87 @@ func (s *Server) HandleConn(module Module, rd io.Reader, crd *countingReader, cw
 	// Transmissions received from the client are not multiplexed.
 	mpx := &rsyncwire.MultiplexWriter{Writer: c.Writer}
 	c.Writer = mpx
+
+	if opts.Sender {
+		// If returning an error, send the error to the client for display, too:
+		defer func() {
+			if err != nil {
+				mpx.WriteMsg(rsyncwire.MsgError, fmt.Appendf(nil, "gokr-rsync [sender]: %v\n", err))
+			}
+		}()
+
+		return s.handleConnSender(module, crd, cwr, paths, opts, false, c, sessionChecksumSeed)
+	}
+
 	// If returning an error, send the error to the client for display, too:
 	defer func() {
 		if err != nil {
-			mpx.WriteMsg(rsyncwire.MsgError, []byte(fmt.Sprintf("gokr-rsync [sender]: %v\n", err)))
+			mpx.WriteMsg(rsyncwire.MsgError, fmt.Appendf(nil, "gokr-rsync [receiver]: %v\n", err))
 		}
 	}()
+	return s.handleConnReceiver(module, crd, cwr, paths, opts, false, c, sessionChecksumSeed)
+}
 
+// handleConnReceiver is equivalent to rsync/main.c:do_server_recv
+func (s *Server) handleConnReceiver(module Module, crd *countingReader, cwr *countingWriter, paths []string, opts *Opts, negotiate bool, c *rsyncwire.Conn, sessionChecksumSeed int32) (err error) {
+	s.logger.Printf("handleConnReceiver")
+
+	if !module.Writable {
+		return fmt.Errorf("ERROR: module is read only")
+	}
+
+	rt := &receiver.Transfer{
+		Opts: &receiver.TransferOpts{
+			DryRun: opts.DryRun,
+
+			DeleteMode:       opts.Delete,
+			PreserveGid:      opts.PreserveGid,
+			PreserveUid:      opts.PreserveUid,
+			PreserveLinks:    opts.PreserveLinks,
+			PreservePerms:    opts.PreservePerms,
+			PreserveDevices:  opts.PreserveDevices,
+			PreserveSpecials: opts.PreserveSpecials,
+			PreserveTimes:    opts.PreserveTimes,
+			// TODO: PreserveHardlinks: opts.PreserveHardlinks,
+		},
+		Dest: module.Path,
+		// TODO: what is Env used for and can we get rid of it?
+		Env: receiver.Osenv{
+			Stdout: os.Stdout,
+			Stderr: os.Stderr,
+			Stdin:  os.Stdin,
+		},
+		Conn: c,
+		Seed: sessionChecksumSeed,
+	}
+
+	if opts.Delete {
+		// receive the exclusion list (openrsync’s is always empty)
+		exclusionList, err := recvFilterList(c)
+		if err != nil {
+			return err
+		}
+		s.logger.Printf("exclusion list read (entries: %d)", len(exclusionList.filters))
+	}
+
+	// receive file list
+	s.logger.Printf("receiving file list")
+	fileList, err := rt.ReceiveFileList()
+	if err != nil {
+		return err
+	}
+	s.logger.Printf("received %d names", len(fileList))
+	stats, err := rt.Do(c, fileList, true)
+	if err != nil {
+		return err
+	}
+
+	s.logger.Printf("stats: %+v", stats)
+	return nil
+}
+
+// handleConnSender is equivalent to rsync/main.c:do_server_sender
+func (s *Server) handleConnSender(module Module, crd *countingReader, cwr *countingWriter, paths []string, opts *Opts, negotiate bool, c *rsyncwire.Conn, sessionChecksumSeed int32) (err error) {
 	st := &sendTransfer{
 		logger: s.logger,
 		opts:   opts,
@@ -356,22 +443,17 @@ func (s *Server) HandleConn(module Module, rd io.Reader, crd *countingReader, cw
 	}
 
 	// receive the exclusion list (openrsync’s is always empty)
-	const exclusionListEnd = 0
-	got, err := c.ReadInt32()
+	exclusionList, err := recvFilterList(c)
 	if err != nil {
 		return err
 	}
-	if want := int32(exclusionListEnd); got != want {
-		return fmt.Errorf("protocol error: non-empty exclusion list received")
-	}
-
-	s.logger.Printf("exclusion list read")
+	s.logger.Printf("exclusion list read (entries: %d)", len(exclusionList.filters))
 
 	// “Update exchange” as per
 	// https://github.com/kristapsdz/openrsync/blob/master/rsync.5
 
 	// send file list
-	fileList, err := st.sendFileList(module, opts, paths)
+	fileList, err := st.sendFileList(module, opts, paths, exclusionList)
 	if err != nil {
 		return err
 	}
@@ -413,7 +495,7 @@ func (s *Server) HandleConn(module Module, rd io.Reader, crd *countingReader, cw
 		return fmt.Errorf("protocol error: expected final -1, got %d", finish)
 	}
 
-	s.logger.Printf("HandleConn done")
+	s.logger.Printf("handleConnSender done")
 
 	return nil
 }

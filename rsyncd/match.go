@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/gokrazy/rsync"
+	"github.com/gokrazy/rsync/internal/nofollow"
 	"github.com/gokrazy/rsync/internal/rsyncchecksum"
 	"github.com/mmcloughlin/md4"
 )
@@ -15,7 +16,7 @@ import (
 // rsync/match.c:hash_search
 func (st *sendTransfer) hashSearch(targets []target, tagTable map[uint16]int, head rsync.SumHead, fileIndex int32, fl file) error {
 	st.logger.Printf("hashSearch(path=%s, len(sums)=%d)", fl.path, len(head.Sums))
-	f, err := os.Open(fl.path)
+	f, err := os.OpenFile(fl.path, os.O_RDONLY|nofollow.Maybe, 0)
 	if err != nil {
 		return err
 	}
@@ -26,10 +27,7 @@ func (st *sendTransfer) hashSearch(targets []target, tagTable map[uint16]int, he
 		return err
 	}
 
-	readSize := 3 * head.BlockLength
-	if readSize < 256*1024 {
-		readSize = 256 * 1024
-	}
+	readSize := max(3*head.BlockLength, 256*1024)
 	ms := mapFile(f, fi.Size(), readSize, head.BlockLength)
 
 	if err := st.conn.WriteInt32(fileIndex); err != nil {
@@ -242,10 +240,7 @@ func (st *sendTransfer) matched(h hash.Hash, ms *mapStruct, head rsync.SumHead, 
 	}
 
 	for j := int64(0); j < n; j += chunkSize {
-		n1 := int64(chunkSize)
-		if n-j < n1 {
-			n1 = n - j
-		}
+		n1 := min(int64(chunkSize), n-j)
 		chunk := ms.ptr(st.lastMatch+j, int32(n1))
 		h.Write(chunk)
 	}

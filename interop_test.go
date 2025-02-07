@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -13,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/BurntSushi/toml"
-	"github.com/gokrazy/rsync/internal/maincmd"
+	maincmd "github.com/gokrazy/rsync/internal/daemonmaincmd"
 	"github.com/gokrazy/rsync/internal/rsyncdconfig"
 	"github.com/gokrazy/rsync/internal/rsynctest"
 	"github.com/gokrazy/rsync/rsyncd"
@@ -32,8 +31,6 @@ func TestMain(m *testing.M) {
 		os.Exit(m.Run())
 	}
 }
-
-// TODO: non-empty exclusion list
 
 func TestRsyncVersion(t *testing.T) {
 	// This function is not an actual test, just used to include the rsync
@@ -84,7 +81,7 @@ func TestInterop(t *testing.T) {
 	}
 	dummy := filepath.Join(source, "dummy")
 	want := []byte("heyo")
-	if err := ioutil.WriteFile(dummy, want, 0644); err != nil {
+	if err := os.WriteFile(dummy, want, 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -121,7 +118,7 @@ func TestInterop(t *testing.T) {
 	// 	       list = true
 
 	// 	`
-	// 		if err := ioutil.WriteFile(config, []byte(rsyncdConfig), 0644); err != nil {
+	// 		if err := os.WriteFile(config, []byte(rsyncdConfig), 0644); err != nil {
 	// 			t.Fatal(err)
 	// 		}
 	// 		srv := exec.Command("rsync",
@@ -178,7 +175,7 @@ func TestInterop(t *testing.T) {
 	}
 
 	{
-		got, err := ioutil.ReadFile(filepath.Join(dest, "dummy"))
+		got, err := os.ReadFile(filepath.Join(dest, "dummy"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -235,7 +232,7 @@ func createSourceFiles(t *testing.T) (string, string, string) {
 		if err := os.MkdirAll(filepath.Dir(dummy), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := ioutil.WriteFile(dummy, []byte(subdir), 0644); err != nil {
+		if err := os.WriteFile(dummy, []byte(subdir), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -260,7 +257,7 @@ func sourcesArgs(t *testing.T) []string {
 func sourceFullySyncedTo(t *testing.T, dest string) error {
 	{
 		want := []byte("expensive")
-		got, err := ioutil.ReadFile(filepath.Join(dest, "dummy"))
+		got, err := os.ReadFile(filepath.Join(dest, "dummy"))
 		if err != nil {
 			return err
 		}
@@ -275,7 +272,7 @@ func sourceFullySyncedTo(t *testing.T, dest string) error {
 
 	{
 		want := []byte("cheap")
-		got, err := ioutil.ReadFile(filepath.Join(dest, "cheap", "dummy"))
+		got, err := os.ReadFile(filepath.Join(dest, "cheap", "dummy"))
 		if err != nil {
 			return err
 		}
@@ -310,6 +307,97 @@ func TestInteropSubdir(t *testing.T) {
 
 	if err := sourceFullySyncedTo(t, dest); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInteropSubdirExclude(t *testing.T) {
+	_, source, dest := createSourceFiles(t)
+
+	// start a server to sync from
+	srv := rsynctest.New(t, rsynctest.InteropModule(source))
+
+	// sync into dest dir
+	rsync := exec.Command("rsync", //"/home/michael/src/openrsync/openrsync",
+		append(
+			append([]string{
+				//		"--debug=all4",
+				"--archive",
+				// TODO: implement support for include rules
+				//"-f", "+ *.o",
+				// NOTE: Using -f is the more modern replacement
+				// for using --exclude like so:
+				//"--exclude=dummy",
+				"-f", "- expensive",
+				"-v", "-v", "-v", "-v",
+				"--port=" + srv.Port,
+			}, "rsync://localhost/interop/"),
+			dest)...)
+	rsync.Stdout = os.Stdout
+	rsync.Stderr = os.Stderr
+	if err := rsync.Run(); err != nil {
+		t.Fatalf("%v: %v", rsync.Args, err)
+	}
+
+	expensiveFn := filepath.Join(dest, "expensive", "dummy")
+	if _, err := os.ReadFile(expensiveFn); !os.IsNotExist(err) {
+		t.Fatalf("ReadFile(%s) did not return -ENOENT, but %v", expensiveFn, err)
+	}
+	cheapFn := filepath.Join(dest, "cheap", "dummy")
+	if _, err := os.ReadFile(cheapFn); err != nil {
+		t.Fatalf("ReadFile(%s): %v", cheapFn, err)
+	}
+}
+
+func TestInteropSubdirExcludeMultipleNested(t *testing.T) {
+	_, source, dest := createSourceFiles(t)
+
+	nested := filepath.Join(source, "nested")
+
+	// create files in source to be copied
+	subDirs := []string{"nested-expensive", "nested-cheap"}
+	for _, subdir := range subDirs {
+		dummy := filepath.Join(nested, subdir, "dummy")
+		if err := os.MkdirAll(filepath.Dir(dummy), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dummy, []byte(subdir), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// start a server to sync from
+	srv := rsynctest.New(t, rsynctest.InteropModule(source))
+
+	// sync into dest dir
+	rsync := exec.Command("rsync", //"/home/michael/src/openrsync/openrsync",
+		append(
+			append([]string{
+				//		"--debug=all4",
+				"--archive",
+				// TODO: implement support for include rules
+				//"-f", "+ *.o",
+				// NOTE: Using -f is the more modern replacement
+				// for using --exclude like so:
+				//"--exclude=dummy",
+				"-f", "- nested/nested-expensive",
+				"-f", "- nested/nested-cheap",
+				"-v", "-v", "-v", "-v",
+				"--port=" + srv.Port,
+			}, "rsync://localhost/interop/"),
+			dest)...)
+	rsync.Stdout = os.Stdout
+	rsync.Stderr = os.Stderr
+	if err := rsync.Run(); err != nil {
+		t.Fatalf("%v: %v", rsync.Args, err)
+	}
+
+	expensiveFn := filepath.Join(dest, "nested", "nested-expensive", "dummy")
+	if _, err := os.ReadFile(expensiveFn); !os.IsNotExist(err) {
+		t.Fatalf("ReadFile(%s) did not return -ENOENT, but %v", expensiveFn, err)
+	}
+	cheapFn := filepath.Join(dest, "nested", "nested-cheap", "dummy")
+	if _, err := os.ReadFile(cheapFn); !os.IsNotExist(err) {
+		t.Fatalf("ReadFile(%s) did not return -ENOENT, but %v", cheapFn, err)
 	}
 }
 
@@ -472,7 +560,7 @@ func TestInteropRemoteDaemonAuthorizedSSHFail(t *testing.T) {
 	}
 
 	authorizedKeysPath := filepath.Join(tmp, "authorized_keys")
-	if err := ioutil.WriteFile(authorizedKeysPath, []byte("# no keys authorized"), 0644); err != nil {
+	if err := os.WriteFile(authorizedKeysPath, []byte("# no keys authorized"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -522,11 +610,11 @@ func TestInteropRemoteDaemonAuthorizedSSHPass(t *testing.T) {
 	}
 
 	authorizedKeysPath := filepath.Join(tmp, "authorized_keys")
-	pubKey, err := ioutil.ReadFile(privKeyPath + ".pub")
+	pubKey, err := os.ReadFile(privKeyPath + ".pub")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ioutil.WriteFile(authorizedKeysPath, pubKey, 0644); err != nil {
+	if err := os.WriteFile(authorizedKeysPath, pubKey, 0644); err != nil {
 		t.Fatal(err)
 	}
 
